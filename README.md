@@ -14,6 +14,6 @@ And you can add it as a fish function:
 
 ```shell
 function claudec
-    container run --rm -u=(id -u):(id -g) -it --env TERM=$TERM -v (pwd):/workspace -v ~/.claude:/claude claude-local $argv
+    container run --rm -u=(id -u):(id -g) -it --env TERM=$TERM -v (pwd):/workspace -v ~/.claude:/claude ghcr.io/yuha0/claude-code-container:latest $argv
 end
 ```
