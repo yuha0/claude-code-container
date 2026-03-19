@@ -47,14 +47,47 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.npm.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config tag.gpgSign true
-          git add Dockerfile
-          git commit -m "Update claude-code to v${VERSION}"
-          git tag -a "v${VERSION}" -m "v${VERSION}"
-          git push
-          git push --tags
+
+          # Create a signed commit via the GitHub API
+          BLOB_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
+            -f content="$(base64 -w0 Dockerfile)" \
+            -f encoding=base64 \
+            --jq '.sha')
+
+          TREE_SHA=$(gh api repos/${{ github.repository }}/git/trees \
+            -f base_tree="$(git rev-parse HEAD^{tree})" \
+            -f 'tree[][path]=Dockerfile' \
+            -f 'tree[][mode]=100644' \
+            -f 'tree[][type]=blob' \
+            -f "tree[][sha]=$BLOB_SHA" \
+            --jq '.sha')
+
+          COMMIT_SHA=$(gh api repos/${{ github.repository }}/git/commits \
+            -f message="Update claude-code to v${VERSION}" \
+            -f "tree=$TREE_SHA" \
+            -f "parents[]=$(git rev-parse HEAD)" \
+            --jq '.sha')
+
+          # Update the branch ref
+          gh api repos/${{ github.repository }}/git/refs/heads/main \
+            -X PATCH -f sha="$COMMIT_SHA"
+
+          # Create a signed annotated tag via the GitHub API
+          TAG_SHA=$(gh api repos/${{ github.repository }}/git/tags \
+            -f "tag=v${VERSION}" \
+            -f "message=v${VERSION}" \
+            -f "object=$COMMIT_SHA" \
+            -f type=commit \
+            --jq '.sha')
+
+          gh api repos/${{ github.repository }}/git/refs \
+            -f "ref=refs/tags/v${VERSION}" \
+            -f "sha=$TAG_SHA"
+
+          # Discard the local sed change and pull the API-created commit
+          git checkout -- Dockerfile
+          git pull --ff-only
+
           gh release create "v${VERSION}" --title "v${VERSION}" --notes "Update claude-code to v${VERSION}"
 
       - name: Set up QEMU
