@@ -48,10 +48,11 @@ jobs:
         run: |
           VERSION="${{ steps.npm.outputs.version }}"
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config tag.gpgSign true
           git add Dockerfile
           git commit -m "Update claude-code to v${VERSION}"
-          git tag "v${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
           git push
           git push --tags
           gh release create "v${VERSION}" --title "v${VERSION}" --notes "Update claude-code to v${VERSION}"
