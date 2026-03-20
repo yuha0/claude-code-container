@@ -19,7 +19,7 @@ jobs:
       release_exists: ${{ steps.release.outputs.exists }}
       image_exists: ${{ steps.image.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.check.outputs.update_dockerfile == 'true' || needs.check.outputs.tag_exists == 'false'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -178,7 +178,7 @@ jobs:
       (needs.commit-and-tag.result == 'success' || needs.commit-and-tag.result == 'skipped') &&
       needs.check.outputs.image_exists == 'false'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
 
