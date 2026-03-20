@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Get latest npm version
         id: npm
@@ -27,79 +29,138 @@ jobs:
           CURRENT=$(grep -oP 'CLAUDE_CODE_VERSION=\K[^\s]+' Dockerfile)
           echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
 
-      - name: Check if update needed
+      - name: Check if Dockerfile update needed
         id: check
         run: |
           if [ "${{ steps.npm.outputs.version }}" = "${{ steps.current.outputs.version }}" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "update_dockerfile=false" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "update_dockerfile=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update Dockerfile
-        if: steps.check.outputs.skip == 'false'
+      - name: Determine target version
+        id: target
         run: |
-          sed -i "s/CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=${{ steps.npm.outputs.version }}/" Dockerfile
+          if [ "${{ steps.check.outputs.update_dockerfile }}" = "true" ]; then
+            echo "version=${{ steps.npm.outputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.current.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Commit, tag, and release
-        if: steps.check.outputs.skip == 'false'
+      - name: Check if tag exists
+        id: tag
+        run: |
+          VERSION="${{ steps.target.outputs.version }}"
+          if git tag -l "v${VERSION}" | grep -q "v${VERSION}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if release exists
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.npm.outputs.version }}"
+          VERSION="${{ steps.target.outputs.version }}"
+          if gh release view "v${VERSION}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          # Create a signed commit via the GitHub API
-          BLOB_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
-            -f content="$(base64 -w0 Dockerfile)" \
-            -f encoding=base64 \
-            --jq '.sha')
+      - name: Check if Docker image exists
+        id: image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.target.outputs.version }}"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          if gh api "users/${REPO_LOWER%%/*}/packages/container/${REPO_LOWER##*/}/versions" \
+              --paginate --jq '.[].metadata.container.tags[]' 2>/dev/null \
+              | grep -qx "${VERSION}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          TREE_SHA=$(gh api repos/${{ github.repository }}/git/trees \
-            -f base_tree="$(git rev-parse HEAD^{tree})" \
-            -f 'tree[][path]=Dockerfile' \
-            -f 'tree[][mode]=100644' \
-            -f 'tree[][type]=blob' \
-            -f "tree[][sha]=$BLOB_SHA" \
-            --jq '.sha')
+      - name: Update Dockerfile
+        if: steps.check.outputs.update_dockerfile == 'true'
+        run: |
+          sed -i "s/CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=${{ steps.target.outputs.version }}/" Dockerfile
 
-          COMMIT_SHA=$(gh api repos/${{ github.repository }}/git/commits \
-            -f message="Update claude-code to v${VERSION}" \
-            -f "tree=$TREE_SHA" \
-            -f "parents[]=$(git rev-parse HEAD)" \
-            --jq '.sha')
+      - name: Commit and tag
+        if: steps.check.outputs.update_dockerfile == 'true' || steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.target.outputs.version }}"
 
-          # Update the branch ref
-          gh api repos/${{ github.repository }}/git/refs/heads/main \
-            -X PATCH -f sha="$COMMIT_SHA"
+          if [ "${{ steps.check.outputs.update_dockerfile }}" = "true" ]; then
+            # Create a signed commit via the GitHub API with updated Dockerfile
+            BLOB_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
+              -f content="$(base64 -w0 Dockerfile)" \
+              -f encoding=base64 \
+              --jq '.sha')
 
-          # Create a signed annotated tag via the GitHub API
-          TAG_SHA=$(gh api repos/${{ github.repository }}/git/tags \
-            -f "tag=v${VERSION}" \
-            -f "message=v${VERSION}" \
-            -f "object=$COMMIT_SHA" \
-            -f type=commit \
-            --jq '.sha')
+            TREE_SHA=$(gh api repos/${{ github.repository }}/git/trees \
+              -f base_tree="$(git rev-parse HEAD^{tree})" \
+              -f 'tree[][path]=Dockerfile' \
+              -f 'tree[][mode]=100644' \
+              -f 'tree[][type]=blob' \
+              -f "tree[][sha]=$BLOB_SHA" \
+              --jq '.sha')
 
-          gh api repos/${{ github.repository }}/git/refs \
-            -f "ref=refs/tags/v${VERSION}" \
-            -f "sha=$TAG_SHA"
+            COMMIT_SHA=$(gh api repos/${{ github.repository }}/git/commits \
+              -f message="Update claude-code to v${VERSION}" \
+              -f "tree=$TREE_SHA" \
+              -f "parents[]=$(git rev-parse HEAD)" \
+              --jq '.sha')
 
-          # Discard the local sed change and pull the API-created commit
-          git checkout -- Dockerfile
+            # Update the branch ref
+            gh api repos/${{ github.repository }}/git/refs/heads/main \
+              -X PATCH -f sha="$COMMIT_SHA"
+          else
+            # No Dockerfile change; tag the current HEAD
+            COMMIT_SHA=$(git rev-parse HEAD)
+          fi
+
+          if [ "${{ steps.tag.outputs.exists }}" = "false" ]; then
+            # Create a signed annotated tag via the GitHub API
+            TAG_SHA=$(gh api repos/${{ github.repository }}/git/tags \
+              -f "tag=v${VERSION}" \
+              -f "message=v${VERSION}" \
+              -f "object=$COMMIT_SHA" \
+              -f type=commit \
+              --jq '.sha')
+
+            gh api repos/${{ github.repository }}/git/refs \
+              -f "ref=refs/tags/v${VERSION}" \
+              -f "sha=$TAG_SHA"
+          fi
+
+          # Pull any API-created commits
+          git checkout -- Dockerfile 2>/dev/null || true
           git pull --ff-only
 
+      - name: Create release
+        if: steps.release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.target.outputs.version }}"
           gh release create "v${VERSION}" --title "v${VERSION}" --notes "Update claude-code to v${VERSION}"
 
       - name: Set up QEMU
-        if: steps.check.outputs.skip == 'false'
+        if: steps.image.outputs.exists == 'false'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.check.outputs.skip == 'false'
+        if: steps.image.outputs.exists == 'false'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: steps.check.outputs.skip == 'false'
+        if: steps.image.outputs.exists == 'false'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -107,7 +168,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push multi-arch image
-        if: steps.check.outputs.skip == 'false'
+        if: steps.image.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -116,5 +177,5 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.npm.outputs.version }}
+            ghcr.io/${{ github.repository }}:${{ steps.target.outputs.version }}
             ghcr.io/${{ github.repository }}:latest
