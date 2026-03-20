@@ -13,6 +13,6 @@ ENV TERM=screen-256color
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-WORKDIR /workspace
+WORKDIR /host
 
 ENTRYPOINT ["/entrypoint.sh"]
