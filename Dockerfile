@@ -7,12 +7,14 @@ RUN apk add --no-cache git su-exec bash && \
     npm cache clean --force
 
 RUN mkdir /claude
-ENV CLAUDE_CONFIG_DIR=/claude
-ENV TERM=screen-256color
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /host
+
+ENV TERM=screen-256color
+ENV CLAUDE_CONFIG_DIR=/claude
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true
 
 ENTRYPOINT ["/entrypoint.sh"]
