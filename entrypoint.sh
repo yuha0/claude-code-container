@@ -9,7 +9,7 @@ USER_GID=${USER_GID:-1000}
 export SHELL=/bin/sh
 
 if [ "$USER_UID" -eq 0 ]; then
-    exec "$@"
+    exec claude "$@"
 fi
 
 if ! getent group "$USER_GID" >/dev/null 2>&1; then
@@ -32,4 +32,4 @@ if [ -d /claude ]; then
     chmod 755 /claude 2>/dev/null || true
 fi
 
-exec su-exec "$USER_NAME" "$@"
+exec su-exec "$USER_NAME" claude "$@"
