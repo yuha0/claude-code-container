@@ -1,6 +1,6 @@
 FROM node:25-alpine
 
-ARG CLAUDE_CODE_VERSION=2.1.84
+ARG CLAUDE_CODE_VERSION=2.1.85
 
 RUN apk add --no-cache git su-exec bash && \
     npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && \
